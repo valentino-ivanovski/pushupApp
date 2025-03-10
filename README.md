@@ -19,3 +19,12 @@ This lightweight macOS menu bar app helps users complete the **Evil Russian Push
 2. Enter your max pushups to generate a custom challenge plan.
 3. Follow the daily pushup goals and complete the sets.
 4. Receive reminders to stay on track.
+
+## Screenshots
+<div style="display: flex; justify-content: space-between;">
+  <img src="./Screenshots/1.png" alt="Screenshot 1" width="200">
+  <img src="./Screenshots/2.png" alt="Screenshot 2" width="200">
+  <img src="./Screenshots/3.png" alt="Screenshot 3" width="200">
+  <img src="./Screenshots/4.png" alt="Screenshot 4" width="200">
+  <img src="./Screenshots/5.png" alt="Screenshot 5" width="200">
+</div>
