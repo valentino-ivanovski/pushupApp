@@ -9,7 +9,8 @@ struct ContentView: View {
         Group {
             if manager.showWelcomeScreen {
                 WelcomeScreen(manager: manager)
-            } else if manager.showMaxTestInput {
+            } else if manager.showMaxTestInput && !manager.challengeStarted {
+                // Only show MaxTestInputView if the challenge hasn't started yet
                 MaxTestInputView(manager: manager)
             } else if manager.showDoneForToday {
                 DoneForTodayView(manager: manager)
@@ -74,7 +75,7 @@ struct MaxTestInputView: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            Text("Weekly Max Test\n Week 1")
+            Text("Weekly Max Test\n Week \(manager.currentWeek)")
                 .font(.title2.bold())
                 .foregroundColor(.orange)
                 .multilineTextAlignment(.center)
@@ -109,7 +110,8 @@ struct ChallengeStatusView: View {
     @ObservedObject var manager: ChallengeManager
     @Binding var showProgress: Bool
     @Binding var showStopWarning: Bool
-    
+    @State private var contentOffset: CGFloat = -20
+
     var body: some View {
         VStack(spacing: 15) {
             HStack {
@@ -119,48 +121,52 @@ struct ChallengeStatusView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
+                .offset(y: -10)
             }
-            
-            Text("Week \(manager.currentWeek) - Day \(manager.currentDayIndex + 1)")
-                .font(.title3.bold())
-            Text("Next Set: \(manager.currentPushups) pushups")
-                .font(.title2)
-            Text("Next Alert In")
-                .font(.headline)
-            Text(manager.timeRemaining)
-                .font(.system(.title, design: .monospaced))
-            
-            if manager.isActive {
-                if manager.isTimerPaused {
-                    Button("Resume Timer") {
-                        manager.resumeTimer()
+
+            VStack(spacing: 10) {
+                Text("Week \(manager.currentWeek) - Day \(manager.currentDayIndex + 1)")
+                    .font(.title3.bold())
+                Text("Next Set: \(manager.currentPushups) pushups")
+                    .font(.title2)
+                Text("Next Alert In")
+                    .font(.headline)
+                Text(manager.timeRemaining)
+                    .font(.system(.title, design: .monospaced))
+
+                if manager.isActive {
+                    if manager.isTimerPaused {
+                        Button("Resume Timer") {
+                            manager.resumeTimer()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                    } else {
+                        Button("Pause Timer") {
+                            manager.pauseTimer()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.yellow)
+                    }
+                    Button("Done for Today") {
+                        manager.doneForToday()
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.green)
+                    .tint(.purple)
                 } else {
-                    Button("Pause Timer") {
-                        manager.pauseTimer()
+                    Button("Start Session") {
+                        manager.startChallenge()
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.yellow)
                 }
-                Button("Done for Today") {
-                    manager.doneForToday()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.purple)
-            } else {
-                Button("Start Session") {
-                    manager.startChallenge()
+
+                Button("View Progress") {
+                    showProgress = true
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.blue)
             }
-            
-            Button("View Progress") {
-                showProgress = true
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
+            .offset(y: contentOffset)
         }
     }
 }
@@ -174,12 +180,30 @@ struct DoneForTodayView: View {
                 .font(.title2.bold())
                 .foregroundColor(.green)
             
-            Text("Great work! Rest up and come back tomorrow at 9 AM.")
+            Text("Great work! Rest up and come back tomorrow.")
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.gray)
+
+            if manager.isRestrictedTime() {
+                Text("Come back after 9 AM to continue.")
+                    .font(.subheadline)
+                    .foregroundColor(.red)
+            } else {
+                Button("Back to workout") {
+                    manager.showDoneForToday = false
+                    manager.showNextDayScreen = true
+                    manager.updateChallengeForNewDay() // Ensure correct day and challenge
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
+            }
         }
         .padding()
+        .offset(y: -10)
+        .onAppear {
+            manager.calculateDailyPushups() // Pre-calculate for the next day
+        }
     }
 }
 
@@ -203,6 +227,9 @@ struct NextDayView: View {
             .tint(.green)
         }
         .padding()
+        .onAppear {
+            manager.calculateDailyPushups()
+        }
     }
 }
 
@@ -271,4 +298,8 @@ struct ProgressView: View {
         formatter.dateStyle = .medium
         return formatter
     }()
+}
+
+#Preview {
+    ContentView()
 }

@@ -14,6 +14,11 @@ class ChallengeManager: ObservableObject {
     @Published var showBaseInput = false
     @Published var showMaxTestInput = false
     @Published var isTimerPaused = false
+    @Published var challengeStarted: Bool = UserDefaults.standard.bool(forKey: "challengeStarted") {
+            didSet {
+                UserDefaults.standard.set(challengeStarted, forKey: "challengeStarted")
+            }
+        }
     @Published var showWelcomeScreen = true
     @Published var showRestScreen = false
     @Published var showDoneForToday: Bool = UserDefaults.standard.bool(forKey: "showDoneForToday") {
@@ -42,6 +47,11 @@ class ChallengeManager: ObservableObject {
             UserDefaults.standard.set(maxTestCounted, forKey: "maxTestCounted")
         }
     }
+    @Published var lastUpdatedDay: Date? = UserDefaults.standard.object(forKey: "lastUpdatedDay") as? Date {
+        didSet {
+            UserDefaults.standard.set(lastUpdatedDay, forKey: "lastUpdatedDay")
+        }
+    }
     
     private var timer: Timer?
     private var midnightTimer: Timer?
@@ -58,7 +68,7 @@ class ChallengeManager: ObservableObject {
     
     private let schedule: [[ChallengeDay]] = [
         [
-            ChallengeDay(week: 1, intensity: 0.3, frequency: 1),
+            ChallengeDay(week: 1, intensity: 0.3, frequency: 60),
             ChallengeDay(week: 1, intensity: 0.5, frequency: 60),
             ChallengeDay(week: 1, intensity: 0.6, frequency: 45),
             ChallengeDay(week: 1, intensity: 0.25, frequency: 60),
@@ -82,75 +92,91 @@ class ChallengeManager: ObservableObject {
             return 1
         }
         let daysSinceStart = Calendar.current.dateComponents([.day], from: startDate, to: Date()).day ?? 0
-        return min((daysSinceStart / 7) + 1, 2) // Cap at 2 weeks
+        return min((daysSinceStart / 7) + 1, 2)
     }
     
     var currentDayIndex: Int {
-        guard let startDate = UserDefaults.standard.object(forKey: "startDate") as? Date else {
-            return 0
+            guard let startDate = UserDefaults.standard.object(forKey: "startDate") as? Date else {
+                return 0
+            }
+            let daysSinceStart = Calendar.current.dateComponents([.day], from: startDate, to: Date()).day ?? 0
+            return daysSinceStart < 14 ? min(daysSinceStart % 7, 6) : 6
         }
-        let daysSinceStart = Calendar.current.dateComponents([.day], from: startDate, to: Date()).day ?? 0
-        return daysSinceStart < 14 ? min(daysSinceStart % 7, 6) : 6 // Stop at day 14 (end of week 2)
-    }
     
     var isChallengeCompleted: Bool {
         guard let startDate = UserDefaults.standard.object(forKey: "startDate") as? Date else {
             return false
         }
         let daysSinceStart = Calendar.current.dateComponents([.day], from: startDate, to: Date()).day ?? 0
-        return daysSinceStart >= 14 // 14 days = 2 weeks
+        return daysSinceStart >= 14
     }
     
     init() {
-        let hasLaunchedBefore = UserDefaults.standard.bool(forKey: "hasLaunchedBefore")
-        
-        if !hasLaunchedBefore {
-            basePushups = 0
-            UserDefaults.standard.set(true, forKey: "hasLaunchedBefore")
+            if let storedDict = UserDefaults.standard.dictionary(forKey: "dailyPushupTotals") as? [String: Int] {
+                dailyPushupTotals = storedDict.mapKeys { ISO8601DateFormatter().date(from: $0) ?? Date() }
+            }
+            
+            if UserDefaults.standard.object(forKey: "startDate") == nil && basePushups == 0 {
+                showWelcomeScreen = true
+                showMaxTestInput = false
+            } else if basePushups > 0 { // Challenge has started, restore state
+                showWelcomeScreen = false
+                showMaxTestInput = false
+                updateChallengeForNewDay()
+                if isChallengeCompleted {
+                    showChallengeCompleted = true
+                } else if isRestrictedTime() {
+                    showDoneForToday = true
+                    scheduleResumeAt9AM()
+                }
+            } else {
+                showMaxTestInput = true
+                showWelcomeScreen = false
+            }
+            
+            if isActive && !isTimerPaused && !isRestrictedTime() {
+                startTimer()
+            }
         }
-        
-        if let storedDict = UserDefaults.standard.dictionary(forKey: "dailyPushupTotals") as? [String: Int] {
-            dailyPushupTotals = storedDict.mapKeys { ISO8601DateFormatter().date(from: $0) ?? Date() }
-        }
-        
-        if basePushups == 0 {
-            showBaseInput = true
-        } else {
-            calculateDailyPushups()
-            checkDayTransition()
-            if isChallengeCompleted {
+    
+    func startChallenge() {
+            if UserDefaults.standard.object(forKey: "startDate") == nil {
+                UserDefaults.standard.set(Date(), forKey: "startDate")
+            }
+            
+            if basePushups == 0 {
+                showMaxTestInput = true
+                showWelcomeScreen = false
+                return
+            }
+            
+            if isRestrictedTime() {
+                showDoneForToday = true
+                scheduleResumeAt9AM()
+                return
+            }
+            
+            if !isChallengeCompleted {
+                challengeStarted = true // Set when challenge begins
+                updateChallengeForNewDay()
+                if !showDoneForToday {
+                    setupDailyChallenge()
+                }
+            } else {
                 showChallengeCompleted = true
             }
         }
-        
-        if isActive && !isTimerPaused {
-            startTimer() // Resume timer if app was closed while active
-        }
-    }
     
-    func startChallenge() {
-        if UserDefaults.standard.object(forKey: "startDate") == nil {
-            UserDefaults.standard.set(Date(), forKey: "startDate")
-        }
-        
-        if basePushups == 0 {
-            showBaseInput = true
+    func setupDailyChallenge() {
+        if isRestrictedTime() {
+            timer?.invalidate()
+            timer = nil
+            isActive = false
+            showDoneForToday = true
+            scheduleResumeAt9AM()
             return
         }
         
-        if currentDayIndex == 0 && !maxTestCounted {
-            showMaxTestInput = true
-        } else if !isChallengeCompleted {
-            checkDayTransition()
-            if !showDoneForToday {
-                setupDailyChallenge()
-            }
-        } else {
-            showChallengeCompleted = true
-        }
-    }
-    
-    func setupDailyChallenge() {
         timer?.invalidate()
         timer = nil
         
@@ -165,42 +191,63 @@ class ChallengeManager: ObservableObject {
         showNextDayScreen = false
     }
     
-    private func calculateDailyPushups() {
-        let daySchedule = schedule[currentWeek - 1][currentDayIndex]
-        currentPushups = max(1, Int(Double(basePushups) * daySchedule.intensity))
-        currentFrequency = daySchedule.frequency
-    }
+    func calculateDailyPushups() {
+            let daySchedule = schedule[currentWeek - 1][currentDayIndex]
+            if currentDayIndex == 0 && !maxTestCounted {
+                currentPushups = basePushups // 100% for max test
+                currentFrequency = daySchedule.frequency
+            } else {
+                currentPushups = max(1, Int(Double(basePushups) * daySchedule.intensity))
+                currentFrequency = daySchedule.frequency
+            }
+            lastUpdatedDay = Calendar.current.startOfDay(for: Date())
+        }
     
     private func startTimer() {
-        timer?.invalidate()
-        timer = nil
-        
-        timeRemainingSeconds = currentFrequency * 60
-        updateTimeDisplay()
-        
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                guard let self = self, !self.isTimerPaused else { return }
+            timer?.invalidate()
+            timer = nil
+            
+            timeRemainingSeconds = currentFrequency * 60
+            updateTimeDisplay()
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                    guard let self = self, !self.isTimerPaused else { return }
+                    
+                    let now = Date()
+                    let calendar = Calendar.current
+                    let hour = calendar.component(.hour, from: now)
+                    let minute = calendar.component(.minute, from: now)
+                    
+                    if hour == 0 && minute == 0 { // Midnight check
+                        self.timer?.invalidate()
+                        self.timer = nil
+                        self.isActive = false
+                        self.showDoneForToday = true
+                        self.showNextDayScreen = false
+                        self.scheduleResumeAt9AM()
+                        return
+                    }
+                    
+                    self.timeRemainingSeconds -= 1
+                    self.updateTimeDisplay()
+                    
+                    if self.timeRemainingSeconds <= 0 {
+                        self.timer?.invalidate()
+                        self.timer = nil
+                        self.showAlert()
+                        self.restartTimer()
+                    }
+                }
                 
-                self.timeRemainingSeconds -= 1
-                self.updateTimeDisplay()
-                
-                if self.timeRemainingSeconds <= 0 {
-                    self.timer?.invalidate()
-                    self.timer = nil
-                    self.showAlert()
-                    self.restartTimer()
+                if let timer = self.timer {
+                    RunLoop.current.add(timer, forMode: .common)
                 }
             }
             
-            if let timer = self.timer {
-                RunLoop.current.add(timer, forMode: .common)
-            }
+            isTimerPaused = false
         }
-        
-        isTimerPaused = false
-    }
     
     func pauseTimer() {
         isTimerPaused = true
@@ -238,78 +285,107 @@ class ChallengeManager: ObservableObject {
         let response = alert.runModal()
         let today = Calendar.current.startOfDay(for: Date())
         
-        if response == .alertFirstButtonReturn { // "Done" clicked
+        if response == .alertFirstButtonReturn {
             dailyPushupTotals[today] = (dailyPushupTotals[today] ?? 0) + currentPushups
         }
     }
     
     func saveMaxTestPushups() {
-        if !maxTestCounted {
-            let today = Calendar.current.startOfDay(for: Date())
-            dailyPushupTotals[today] = (dailyPushupTotals[today] ?? 0) + basePushups
-            maxTestCounted = true
+            if !maxTestCounted {
+                let today = Calendar.current.startOfDay(for: Date())
+                dailyPushupTotals[today] = (dailyPushupTotals[today] ?? 0) + basePushups
+                maxTestCounted = true
+                challengeStarted = true // Set here when max pushups are saved
+                calculateDailyPushups()
+            }
         }
-    }
     
     func doneForToday() {
-        timer?.invalidate()
-        timer = nil
-        isActive = false
-        isTimerPaused = false
-        timeRemaining = "00:00"
-        showDoneForToday = true
-        scheduleNextDayResume()
-    }
+            timer?.invalidate()
+            timer = nil
+            isActive = false
+            isTimerPaused = false
+            timeRemainingSeconds = currentFrequency * 60
+            updateTimeDisplay()
+            showDoneForToday = true
+            scheduleResumeAt9AM()
+        }
     
-    private func scheduleNextDayResume() {
-        midnightTimer?.invalidate()
-        midnightTimer = nil
-        
-        let now = Date()
-        let calendar = Calendar.current
-        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) else { return }
-        
-        let tomorrowMidnight = calendar.startOfDay(for: tomorrow)
-        let timeInterval = tomorrowMidnight.timeIntervalSinceNow
-        
-        DispatchQueue.main.async { [weak self] in
-            self?.midnightTimer = Timer.scheduledTimer(withTimeInterval: timeInterval, repeats: false) { [weak self] _ in
-                guard let self = self else { return }
-                self.showDoneForToday = false
-                self.showNextDayScreen = true
-                self.checkDayTransition()
+    func updateChallengeForNewDay() {
+            let today = Calendar.current.startOfDay(for: Date())
+            
+            if isChallengeCompleted {
+                showChallengeCompleted = true
+                return
             }
-            if let timer = self?.midnightTimer {
-                RunLoop.current.add(timer, forMode: .common)
+            
+            // Always update pushups for the current day
+            if lastUpdatedDay == nil || !Calendar.current.isDate(lastUpdatedDay!, inSameDayAs: today) {
+                lastUpdatedDay = today
+                calculateDailyPushups()
+            }
+            
+            // Default to NextDayView unless explicitly done for today
+            if !showDoneForToday {
+                showNextDayScreen = true
             }
         }
-    }
+        
     
-    private func checkDayTransition() {
-        let today = Calendar.current.startOfDay(for: Date())
+    public func isRestrictedTime() -> Bool {
         let calendar = Calendar.current
         let now = Date()
-        let components = calendar.dateComponents([.hour], from: now)
-        
-        if isChallengeCompleted {
-            showChallengeCompleted = true
-            return
-        }
-        
-        if let lastDay = dailyPushupTotals.keys.max(), lastDay < today {
-            if showDoneForToday {
-                showDoneForToday = false
-                showNextDayScreen = true
-            } else if let hour = components.hour, hour >= 0 && hour < 9 {
-                // Show "Done for Today" only between midnight and 9 am
-                showDoneForToday = true
-                scheduleNextDayResume()
-            } else {
-                showNextDayScreen = true
-                isActive = false
+        let hour = calendar.component(.hour, from: now)
+        return hour >= 0 && hour < 9
+    }
+    
+    private func scheduleResumeAt9AM() {
+            midnightTimer?.invalidate()
+            midnightTimer = nil
+            
+            let now = Date()
+            let calendar = Calendar.current
+            var components = calendar.dateComponents([.year, .month, .day], from: now)
+            components.hour = 9
+            components.minute = 0
+            components.second = 0
+            
+            guard let resumeTime = calendar.date(from: components), resumeTime > now else {
+                guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now) else { return }
+                components = calendar.dateComponents([.year, .month, .day], from: tomorrow)
+                components.hour = 9
+                components.minute = 0
+                components.second = 0
+                guard let resumeTime = calendar.date(from: components) else { return }
+                let timeInterval = resumeTime.timeIntervalSinceNow
+                
+                DispatchQueue.main.async { [weak self] in
+                    self?.midnightTimer = Timer.scheduledTimer(withTimeInterval: timeInterval, repeats: false) { [weak self] _ in
+                        guard let self = self else { return }
+                        self.showDoneForToday = false
+                        self.showNextDayScreen = true
+                        self.updateChallengeForNewDay() // Updates day and challenge
+                    }
+                    if let timer = self?.midnightTimer {
+                        RunLoop.current.add(timer, forMode: .common)
+                    }
+                }
+                return
+            }
+            
+            let timeInterval = resumeTime.timeIntervalSinceNow
+            DispatchQueue.main.async { [weak self] in
+                self?.midnightTimer = Timer.scheduledTimer(withTimeInterval: timeInterval, repeats: false) { [weak self] _ in
+                    guard let self = self else { return }
+                    self.showDoneForToday = false
+                    self.showNextDayScreen = true
+                    self.updateChallengeForNewDay() // Updates day and challenge
+                }
+                if let timer = self?.midnightTimer {
+                    RunLoop.current.add(timer, forMode: .common)
+                }
             }
         }
-    }
     
     func stopChallenge() {
         timer?.invalidate()
@@ -325,25 +401,30 @@ class ChallengeManager: ObservableObject {
     }
     
     func resetChallenge() {
-        isActive = false
-        currentPushups = 0
-        timeRemaining = "00:00"
-        showBaseInput = false
-        showMaxTestInput = false
-        basePushups = 0
-        dailyPushupTotals = [:]
-        maxTestCounted = false
-        showDoneForToday = false
-        showNextDayScreen = false
-        showChallengeCompleted = false
-        UserDefaults.standard.removeObject(forKey: "startDate")
-        UserDefaults.standard.removeObject(forKey: "dailyPushupTotals")
-        UserDefaults.standard.removeObject(forKey: "maxTestCounted")
-        UserDefaults.standard.removeObject(forKey: "currentFrequency")
-        UserDefaults.standard.removeObject(forKey: "timeRemainingSeconds")
-        UserDefaults.standard.removeObject(forKey: "showDoneForToday")
-        showWelcomeScreen = true
-    }
+            isActive = false
+            currentPushups = 0
+            timeRemaining = "00:00"
+            showBaseInput = false
+            showMaxTestInput = true
+            basePushups = 0
+            dailyPushupTotals = [:]
+            maxTestCounted = false
+            showDoneForToday = false
+            showNextDayScreen = false
+            showChallengeCompleted = false
+            lastUpdatedDay = nil
+            challengeStarted = false // Reset when quitting
+            UserDefaults.standard.removeObject(forKey: "startDate")
+            UserDefaults.standard.removeObject(forKey: "dailyPushupTotals")
+            UserDefaults.standard.removeObject(forKey: "maxTestCounted")
+            UserDefaults.standard.removeObject(forKey: "currentFrequency")
+            UserDefaults.standard.removeObject(forKey: "timeRemainingSeconds")
+            UserDefaults.standard.removeObject(forKey: "showDoneForToday")
+            UserDefaults.standard.removeObject(forKey: "lastUpdatedDay")
+            UserDefaults.standard.removeObject(forKey: "basePushups")
+            UserDefaults.standard.removeObject(forKey: "challengeStarted")
+            showWelcomeScreen = true
+        }
     
     func getProgressData() -> [(date: Date, pushups: Int)] {
         return dailyPushupTotals.map { ($0.key, $0.value) }
