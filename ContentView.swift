@@ -2,15 +2,12 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var manager = ChallengeManager()
-    @State private var showProgress = false
-    @State private var showStopWarning = false
     
     var body: some View {
         Group {
             if manager.showWelcomeScreen {
                 WelcomeScreen(manager: manager)
             } else if manager.showMaxTestInput && !manager.challengeStarted {
-                // Only show MaxTestInputView if the challenge hasn't started yet
                 MaxTestInputView(manager: manager)
             } else if manager.showDoneForToday {
                 DoneForTodayView(manager: manager)
@@ -18,25 +15,16 @@ struct ContentView: View {
                 NextDayView(manager: manager)
             } else if manager.showChallengeCompleted {
                 ChallengeCompletedView(manager: manager)
+            } else if manager.showProgressScreen {
+                ProgressView(manager: manager)
+            } else if manager.showStopWarning {
+                StopWarningView(manager: manager)
             } else {
-                ChallengeStatusView(manager: manager, showProgress: $showProgress, showStopWarning: $showStopWarning)
+                ChallengeStatusView(manager: manager)
             }
         }
         .padding()
         .frame(width: 250, height: 300)
-        .sheet(isPresented: $showProgress) {
-            ProgressView(manager: manager, showProgress: $showProgress)
-        }
-        .alert(isPresented: $showStopWarning) {
-            Alert(
-                title: Text("Stop Training"),
-                message: Text("This will reset all your progress. Are you sure?"),
-                primaryButton: .destructive(Text("Yes")) {
-                    manager.stopChallenge()
-                },
-                secondaryButton: .cancel()
-            )
-        }
     }
 }
 
@@ -108,8 +96,6 @@ struct MaxTestInputView: View {
 
 struct ChallengeStatusView: View {
     @ObservedObject var manager: ChallengeManager
-    @Binding var showProgress: Bool
-    @Binding var showStopWarning: Bool
     @State private var contentOffset: CGFloat = -20
 
     var body: some View {
@@ -117,7 +103,7 @@ struct ChallengeStatusView: View {
             HStack {
                 Spacer()
                 Button("Quit") {
-                    showStopWarning = true
+                    manager.showStopWarning = true
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
@@ -161,7 +147,7 @@ struct ChallengeStatusView: View {
                 }
 
                 Button("View Progress") {
-                    showProgress = true
+                    manager.showProgressScreen = true
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.blue)
@@ -176,33 +162,26 @@ struct DoneForTodayView: View {
     
     var body: some View {
         VStack(spacing: 20) {
-            Text("Done for Today!")
+            Text("Are you ready?")
                 .font(.title2.bold())
                 .foregroundColor(.green)
             
-            Text("Great work! Rest up and come back tomorrow.")
+            Text("Time to start today's new challenge")
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
                 .foregroundColor(.gray)
 
-            if manager.isRestrictedTime() {
-                Text("Come back after 9 AM to continue.")
-                    .font(.subheadline)
-                    .foregroundColor(.red)
-            } else {
-                Button("Back to workout") {
-                    manager.showDoneForToday = false
-                    manager.showNextDayScreen = true
-                    manager.updateChallengeForNewDay() // Ensure correct day and challenge
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.blue)
+            Button("Start Challenge") {
+                manager.showDoneForToday = false
+                manager.setupDailyChallenge()
             }
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
         }
         .padding()
         .offset(y: -10)
         .onAppear {
-            manager.calculateDailyPushups() // Pre-calculate for the next day
+            manager.calculateDailyPushups()
         }
     }
 }
@@ -242,6 +221,11 @@ struct ChallengeCompletedView: View {
                 .font(.title2.bold())
                 .foregroundColor(.green)
             
+            Text("Congratulations! You've completed the 14-day Evil Russian Pushup Challenge.")
+                .font(.subheadline)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.gray)
+            
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(manager.getProgressData(), id: \.date) { entry in
@@ -251,12 +235,13 @@ struct ChallengeCompletedView: View {
             }
             
             Button("Start Again") {
-                manager.resetChallenge()
+                manager.resetAndRestartChallenge()
             }
             .buttonStyle(.borderedProminent)
             .tint(.blue)
         }
         .padding()
+        .frame(width: 250, height: 300)
     }
     
     private let dateFormatter: DateFormatter = {
@@ -268,7 +253,6 @@ struct ChallengeCompletedView: View {
 
 struct ProgressView: View {
     @ObservedObject var manager: ChallengeManager
-    @Binding var showProgress: Bool
     
     var body: some View {
         VStack(spacing: 20) {
@@ -283,14 +267,14 @@ struct ProgressView: View {
                 }
             }
             
-            Button("Close") {
-                showProgress = false
+            Button("Back") {
+                manager.showProgressScreen = false
             }
             .buttonStyle(.borderedProminent)
             .tint(.gray)
         }
         .padding()
-        .frame(width: 300, height: 200)
+        .frame(width: 250, height: 300)
     }
     
     private let dateFormatter: DateFormatter = {
@@ -298,6 +282,38 @@ struct ProgressView: View {
         formatter.dateStyle = .medium
         return formatter
     }()
+}
+
+struct StopWarningView: View {
+    @ObservedObject var manager: ChallengeManager
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Stop Training")
+                .font(.title2.bold())
+                .foregroundColor(.red)
+            
+            Text("This will reset all your progress. Are you sure?")
+                .font(.body)
+                .multilineTextAlignment(.center)
+            
+            HStack(spacing: 20) {
+                Button("Yes") {
+                    manager.stopChallenge()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                
+                Button("No") {
+                    manager.showStopWarning = false
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.gray)
+            }
+        }
+        .padding()
+        .frame(width: 250, height: 300)
+    }
 }
 
 #Preview {
